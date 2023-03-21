@@ -2,8 +2,9 @@ package test.project1;
 
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Promise;
+import io.vertx.core.buffer.Buffer;
+import io.vertx.core.file.FileSystem;
 import io.vertx.core.http.HttpServer;
-import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
@@ -12,6 +13,7 @@ import io.vertx.ext.web.handler.StaticHandler;
 
 import java.util.ArrayList;
 import java.util.List;
+
 
 public class Server extends AbstractVerticle {
     private Router router;
@@ -31,20 +33,37 @@ public class Server extends AbstractVerticle {
         // serve static files
         router.route().handler(StaticHandler.create());
 
-        // start the server
-        vertx.createHttpServer().requestHandler(router)
-                .listen(config().getInteger("http.port", 8080))
-                .onSuccess(server -> {
-                    this.server = server;
-                    start.complete();
-                })
-                .onFailure(start::fail);
+        // load the stored words
+        FileSystem fileSystem = vertx.fileSystem();
+        fileSystem.readFile("words.txt", result -> {
+            if (result.succeeded()) {
+                String fileContent = result.result().toString();
+                String[] storedWords = fileContent.split("\\r?\\n");
+                for (String word : storedWords) {
+                    words.add(word);
+                }
+                System.out.println("Loaded " + words.size() + " words from file.");
+            } else {
+                System.out.println("Failed to load words from file: " + result.cause().getMessage());
+            }
+
+            // start the server
+            vertx.createHttpServer().requestHandler(router)
+                    .listen(config().getInteger("http.port", 8080))
+                    .onSuccess(server -> {
+                        this.server = server;
+                        start.complete();
+                    })
+                    .onFailure(start::fail);
+        });
     }
 
     private void analyzeText(RoutingContext context) {
         // get the text from the request body
         JsonObject requestBody = context.getBodyAsJson();
         String text = requestBody.getString("text");
+
+        System.out.println(text);
 
         // if no words have been provided yet, return null for both response fields
         if (words.isEmpty()) {
@@ -84,6 +103,22 @@ public class Server extends AbstractVerticle {
         context.response()
                 .putHeader("content-type", "application/json")
                 .end(response.encode());
+
+        // add the new word to the list and store it in the file
+        if (!words.contains(text)) {
+            words.add(text);
+            storeWords();
+        }
+    }
+
+    private void storeWords() {
+        vertx.fileSystem().writeFile("words.txt", Buffer.buffer(String.join("\n", words)), ar -> {
+            if (ar.succeeded()) {
+                System.out.println("Words stored successfully.");
+            } else {
+                System.err.println("Failed to store words: " + ar.cause().getMessage());
+            }
+        });
     }
 
     private int getValue(String word) {
